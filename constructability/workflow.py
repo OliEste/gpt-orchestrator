@@ -1254,7 +1254,7 @@ Your response should be ONLY the list of FILE_PATH values, one per line."""
         
         logger.info(f"[PHASE 3] Rendering {len(all_pages) - skipped_dwg_count} pages from {len(pages_by_file)} files")
         
-        # Use ProcessPoolExecutor for isolation (same pattern as Phase 1)
+        # Use ThreadPoolExecutor for IIS compatibility (ProcessPoolExecutor causes crashes in IIS)
         start_time = time.time()
         rendered_count = 0
         
@@ -1265,7 +1265,7 @@ Your response should be ONLY the list of FILE_PATH values, one per line."""
                 index_packet_dict = job_state.files[file_path]['index_packet']
                 file_modified_times[file_path] = index_packet_dict.get('modified_time')
         
-        with ProcessPoolExecutor(max_workers=min(5, len(pages_by_file))) as executor:
+        with ThreadPoolExecutor(max_workers=min(5, len(pages_by_file))) as executor:
             # Submit rendering tasks
             future_to_file = {}
             for file_path, page_nums in pages_by_file.items():
