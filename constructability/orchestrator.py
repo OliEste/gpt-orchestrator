@@ -34,9 +34,46 @@ CSV_TEMPLATE_PATH = os.path.join(
     'result_template.csv'
 )
 
-# Configure logging for IIS - timestamped per run
+# Store job-specific log handlers for cleanup
+job_log_handlers = {}
+job_log_handlers_lock = threading.Lock()
+
+# Configure basic session logging (app-level only)
 def setup_logging():
-    """Configure logging for IIS deployment with timestamped log files."""
+    """Configure basic session logging for app-level events."""
+    # Check if logging is already configured (avoid duplicate handlers)
+    root_logger = logging.getLogger()
+    if root_logger.handlers:
+        # Logging already configured, just return the logger
+        return logging.getLogger(__name__)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Console handler (for IIS stdout) - app-level only
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    
+    # Root logger
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.addHandler(console_handler)
+    
+    # Flask logger - reduce verbosity
+    flask_logger = logging.getLogger('werkzeug')
+    flask_logger.setLevel(logging.WARNING)
+    
+    # Get module logger
+    module_logger = logging.getLogger(__name__)
+    module_logger.info("Session logging initialized (app-level only)")
+    
+    return module_logger
+
+def setup_job_logging(job_id: str):
+    """Create a per-review log file for a specific job."""
     # Get the directory where this script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
     
@@ -49,16 +86,16 @@ def setup_logging():
         import glob
         import time
         cutoff_time = time.time() - (30 * 24 * 60 * 60)  # 30 days ago
-        for log_file in glob.glob(os.path.join(log_dir, 'orchestrator_*.log')):
+        for log_file in glob.glob(os.path.join(log_dir, 'review_*.log')):
             if os.path.getmtime(log_file) < cutoff_time:
                 os.remove(log_file)
     except Exception:
         # Don't fail if cleanup doesn't work
         pass
     
-    # Create timestamped filename (YYYYMMDD_HHMMSS format)
+    # Create timestamped filename with job_id
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_file = os.path.join(log_dir, f'orchestrator_{timestamp}.log')
+    log_file = os.path.join(log_dir, f'review_{job_id}_{timestamp}.log')
     
     # Create formatter
     formatter = logging.Formatter(
@@ -66,31 +103,34 @@ def setup_logging():
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     
-    # File handler (no rotation needed since each run gets its own file)
+    # File handler for this job
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     
-    # Console handler (for IIS stdout)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
+    # Add handler to root logger
+    root_logger = logging.getLogger()
+    root_logger.addHandler(file_handler)
     
-    # Root logger
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
+    # Store handler for cleanup later
+    with job_log_handlers_lock:
+        job_log_handlers[job_id] = file_handler
     
-    # Flask logger - reduce verbosity
-    flask_logger = logging.getLogger('werkzeug')
-    flask_logger.setLevel(logging.WARNING)
+    # Log that job logging has started
+    logger = logging.getLogger(__name__)
+    logger.info(f"Job {job_id} logging initialized - Log file: {log_file}")
     
-    # Get module logger and log the log file location
-    module_logger = logging.getLogger(__name__)
-    module_logger.info(f"Logging initialized - Log file: {log_file}")
-    
-    return module_logger
+    return log_file
+
+def cleanup_job_logging(job_id: str):
+    """Remove job-specific log handler when job completes."""
+    with job_log_handlers_lock:
+        if job_id in job_log_handlers:
+            handler = job_log_handlers[job_id]
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(handler)
+            handler.close()
+            del job_log_handlers[job_id]
 
 # Setup logging before creating app
 logger = setup_logging()
@@ -214,6 +254,10 @@ def _should_exclude_path(file_path: str, excluded_paths: list) -> bool:
 def _process_constructability_review_async(job_id: str, egnyte_token: str, data: dict):
     """Background function to process constructability review asynchronously."""
     try:
+        # Setup per-review logging for this job
+        log_file = setup_job_logging(job_id)
+        logger.info(f"Starting constructability review job {job_id} - Log file: {log_file}")
+        
         _update_job_progress(job_id, status='processing', progress={'current_stage': 'Fetching files from Egnyte'})
         
         # Extract parameters
@@ -331,6 +375,10 @@ def _process_constructability_review_async(job_id: str, egnyte_token: str, data:
             logger.error(f"{error_msg}")
             logger.error(f"Traceback:\n{error_traceback}")
             _update_job_progress(job_id, status='error', error=error_msg)
+            
+            # Cleanup job-specific logging
+            cleanup_job_logging(job_id)
+            
             _delete_job(job_id)
             return
         
@@ -385,6 +433,10 @@ def _process_constructability_review_async(job_id: str, egnyte_token: str, data:
         
         # Mark job as complete
         _update_job_progress(job_id, status='complete', result=result, progress={'current_stage': 'Complete'})
+        logger.info(f"Job {job_id} completed successfully")
+        
+        # Cleanup job-specific logging
+        cleanup_job_logging(job_id)
         
     except Exception as e:
         import traceback
@@ -393,6 +445,10 @@ def _process_constructability_review_async(job_id: str, egnyte_token: str, data:
         logger.error(f"Job {job_id} failed: {error_msg}")
         logger.error(f"Traceback:\n{error_traceback}")
         _update_job_progress(job_id, status='error', error=error_msg)
+        
+        # Cleanup job-specific logging
+        cleanup_job_logging(job_id)
+        
         # Delete failed job
         _delete_job(job_id)
 

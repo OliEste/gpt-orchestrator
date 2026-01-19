@@ -26,3 +26,5 @@ dist/
 # Token storage
 .tokens/
 
+# Nested git repository
+gpt-orchestrator/
