@@ -1,0 +1,579 @@
+openapi: "3.1.0"
+info:
+  version: 1.2.2
+  title: Constructability Orchestrator API
+  description: API for constructability workflow orchestration (Egnyte OAuth via backend proxy).
+  license:
+    name: MIT
+
+servers:
+  - url: https://approximate-vegetation-powder-news.trycloudflare.com
+    description: Production server
+
+components:
+  schemas: {}
+  securitySchemes:
+    EgnyteOAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: OAuth
+
+security:
+  - EgnyteOAuth: []
+
+paths:
+  /oauth/authorize:
+    get:
+      summary: OAuth authorize proxy
+      operationId: oauthAuthorizeProxy
+      description: Redirects the user to Egnyte's authorization page.
+      tags: [auth]
+      security: []
+      parameters:
+        - name: client_id
+          in: query
+          required: false
+          schema: { type: string }
+        - name: redirect_uri
+          in: query
+          required: false
+          schema: { type: string }
+        - name: response_type
+          in: query
+          required: false
+          schema: { type: string }
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string }
+        - name: state
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to Egnyte authorize endpoint
+        "400":
+          description: Bad request
+        "500":
+          description: Server error
+
+  /oauth/token:
+    post:
+      summary: OAuth token proxy
+      operationId: oauthTokenProxy
+      description: Exchanges an authorization code for tokens via Egnyte.
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type:
+                  type: string
+                  description: OAuth grant type (authorization_code or refresh_token)
+                  example: authorization_code
+                code:
+                  type: string
+                  description: Authorization code (authorization_code grant)
+                refresh_token:
+                  type: string
+                  description: Refresh token (refresh_token grant)
+                redirect_uri:
+                  type: string
+                  description: Redirect URI used in the authorization step
+                client_id:
+                  type: string
+                  description: OAuth client_id (optional if backend injects)
+                client_secret:
+                  type: string
+                  description: OAuth client_secret (optional if backend injects)
+              additionalProperties: true
+          application/json:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type:
+                  type: string
+                  description: OAuth grant type (authorization_code or refresh_token)
+                  example: authorization_code
+                code:
+                  type: string
+                  description: Authorization code (authorization_code grant)
+                refresh_token:
+                  type: string
+                  description: Refresh token (refresh_token grant)
+                redirect_uri:
+                  type: string
+                  description: Redirect URI used in the authorization step
+                client_id:
+                  type: string
+                  description: OAuth client_id (optional if backend injects)
+                client_secret:
+                  type: string
+                  description: OAuth client_secret (optional if backend injects)
+              additionalProperties: true
+      responses:
+        "200":
+          description: Token response
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, token_type]
+                properties:
+                  access_token:
+                    type: string
+                    description: OAuth access token
+                  token_type:
+                    type: string
+                    description: Token type (typically Bearer)
+                    example: Bearer
+                  expires_in:
+                    type: integer
+                    description: Lifetime of access token in seconds
+                    nullable: true
+                  refresh_token:
+                    type: string
+                    description: OAuth refresh token (if issued)
+                    nullable: true
+                  scope:
+                    type: string
+                    description: Granted scopes (space-delimited)
+                    nullable: true
+                  id_token:
+                    type: string
+                    description: ID token (if OIDC-style provider)
+                    nullable: true
+                additionalProperties: true
+        "400":
+          description: Bad request
+        "500":
+          description: Server error
+
+  /egnyte/list:
+    post:
+      summary: List files from an Egnyte folder
+      operationId: egnyteListFiles
+      description: Lists files under an Egnyte folder using the Bearer token.
+      tags: [egnyte]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [folder_path]
+              properties:
+                folder_path:
+                  type: string
+                  description: Egnyte folder path (e.g., "/Shared")
+                  example: "/Shared"
+                include_globs:
+                  type: array
+                  items: { type: string }
+                  description: Optional include patterns
+                  example: ["**/*.pdf", "**/*.csv", "**/*.txt"]
+                exclude_globs:
+                  type: array
+                  items: { type: string }
+                  description: Optional exclude patterns
+                  example: ["**/Archive/**", "**/.trash/**"]
+      responses:
+        "200":
+          description: File list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [folder_path, files]
+                properties:
+                  folder_path: { type: string }
+                  files:
+                    type: array
+                    items:
+                      type: object
+                      required: [path, name, type]
+                      properties:
+                        path:
+                          type: string
+                          description: Egnyte path for the item
+                        name:
+                          type: string
+                        type:
+                          type: string
+                          enum: ["file", "folder"]
+                        size_bytes:
+                          type: integer
+                          nullable: true
+                        modified_utc:
+                          type: string
+                          nullable: true
+                        mime_type:
+                          type: string
+                          nullable: true
+        "400":
+          description: Bad request
+        "401":
+          description: Unauthorized
+        "500":
+          description: Server error
+
+  /workflow/start-constructability-review:
+    post:
+      summary: Start async constructability review job
+      operationId: startConstructabilityReview
+      description: Starts an async constructability review job. Returns immediately with job_id. Use getJobStatus to poll for progress.
+      tags: [workflow]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [selected_disciplines]
+              properties:
+                egnyte_folder_path:
+                  type: string
+                  nullable: true
+                  description: Folder to crawl (provide this or file_paths)
+                  example: "/Shared/Projects/X"
+                file_paths:
+                  type: array
+                  nullable: true
+                  items: { type: string }
+                  description: Explicit file paths to process (preferred)
+                  example:
+                    - "/Shared/Projects/X/drawing1.pdf"
+                    - "/Shared/Projects/X/specs/spec.csv"
+                include_globs:
+                  type: array
+                  nullable: true
+                  items: { type: string }
+                  description: Include patterns when crawling
+                  example: ["**/*.pdf", "**/*.csv", "**/*.txt"]
+                exclude_globs:
+                  type: array
+                  nullable: true
+                  items: { type: string }
+                  description: Exclude patterns when crawling
+                  example: ["**/Archive/**", "**/.trash/**"]
+                selected_disciplines:
+                  type: array
+                  items:
+                    type: string
+                    enum: ["Fire Protection", "Civil", "Plumbing", "Electrical", "Structural", "Architectural", "Mechanical"]
+                  description: Disciplines to review
+                  example: ["Fire Protection", "Electrical", "Structural"]
+                csv_output_folder:
+                  type: string
+                  nullable: true
+                  description: Egnyte folder path where CSV should be written (e.g., "/Shared"). Must be provided with csv_output_filename.
+                  example: "/Shared"
+                csv_output_filename:
+                  type: string
+                  nullable: true
+                  description: CSV filename (e.g., "Constructability_Review_Results.csv" or "Constructability_Review_Results"). If no .csv extension, it will be added automatically. Must be provided with csv_output_folder.
+                  example: "Constructability_Review_Results.csv"
+      responses:
+        "202":
+          description: Job started successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status, message]
+                properties:
+                  job_id:
+                    type: string
+                    description: Unique job identifier for polling status
+                    example: "550e8400-e29b-41d4-a716-446655440000"
+                  status:
+                    type: string
+                    enum: [queued]
+                    description: Initial job status
+                  message:
+                    type: string
+                    description: Instructions for polling
+                    example: "Review job started. Poll /workflow/status/{job_id} for progress."
+        "400":
+          description: Bad request - missing required fields
+        "401":
+          description: Unauthorized
+        "500":
+          description: Server error
+
+  /health:
+    get:
+      summary: Health check endpoint
+      operationId: healthCheck
+      description: Returns service health status.
+      tags: [health]
+      security: []
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, orchestrator]
+                properties:
+                  status: { type: string }
+                  orchestrator: { type: string }
+                additionalProperties: false
+
+  /workflow/status/{job_id}:
+    get:
+      summary: Get constructability review job status
+      operationId: getJobStatus
+      description: Returns the current status and progress of an async constructability review job. Poll this endpoint every 10 seconds until status is "complete".
+      tags: [workflow]
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID returned from startConstructabilityReview
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        "200":
+          description: Job status and progress
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status, progress, created_at, updated_at]
+                properties:
+                  job_id:
+                    type: string
+                    description: Job identifier
+                  status:
+                    type: string
+                    enum: [queued, processing, complete, error]
+                    description: Current job status
+                  progress:
+                    type: object
+                    required: [files_fetched, total_files, files_preprocessed, current_stage]
+                    properties:
+                      files_fetched:
+                        type: integer
+                        description: Number of files fetched from Egnyte
+                        example: 105
+                      total_files:
+                        type: integer
+                        description: Total number of files to process
+                        example: 105
+                      files_preprocessed:
+                        type: integer
+                        description: Number of files with index extracted (Phase 1 - fast metadata extraction, no image conversion)
+                        example: 45
+                      current_stage:
+                        type: string
+                        description: Current processing stage (e.g., "Extracting index", "Triage", "Rendering pages", "Visual review")
+                        example: "Extracting index (45/105)"
+                      phase:
+                        type: integer
+                        nullable: true
+                        description: Current workflow phase (1=Index extraction, 2=Triage, 3=Merge, 4=Render, 5=Review)
+                        example: 1
+                      pages_requested:
+                        type: integer
+                        nullable: true
+                        description: Total number of pages requested by discipline GPTs after triage (Phase 2)
+                        example: 30
+                      pages_rendered:
+                        type: integer
+                        nullable: true
+                        description: Number of unique pages rendered after deduplication (Phase 4)
+                        example: 25
+                  created_at:
+                    type: string
+                    format: date-time
+                    description: Job creation timestamp
+                  updated_at:
+                    type: string
+                    format: date-time
+                    description: Last update timestamp
+                  error:
+                    type: string
+                    nullable: true
+                    description: Error message (only present if status is "error")
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, error_description]
+                properties:
+                  error:
+                    type: string
+                    example: "Job not found"
+                  error_description:
+                    type: string
+                    example: "Job ID {job_id} does not exist or has been deleted"
+
+  /workflow/result/{job_id}:
+    get:
+      summary: Get constructability review job results
+      operationId: getJobResult
+      description: Returns the final results of a completed constructability review job. Only call this when status is "complete".
+      tags: [workflow]
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID returned from startConstructabilityReview
+          example: "550e8400-e29b-41d4-a716-446655440000"
+      responses:
+        "200":
+          description: Final review results (same schema as executeConstructabilityReview response)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, total_issues, final_output]
+                properties:
+                  success: { type: boolean }
+                  total_issues:
+                    type: integer
+                    description: Total number of issues found
+                  discipline_results:
+                    type: object
+                    additionalProperties: { type: string }
+                    description: Output from each discipline GPT
+                  discipline_errors:
+                    type: object
+                    additionalProperties: { type: string }
+                    description: Errors encountered per discipline (if any)
+                  checklist_output:
+                    type: string
+                    nullable: true
+                    description: Output from CR Checklist Review Agent
+                  master_observations_output:
+                    type: string
+                    nullable: true
+                    description: Output from Master Observations Review Agent
+                  merged_issues:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        item_no: { type: integer }
+                        discipline: { type: string }
+                        reference: { type: string }
+                        observation: { type: string }
+                    description: All issues merged and numbered
+                  final_output:
+                    type: string
+                    description: Formatted output ready for ChatGPT display
+                  files_listed:
+                    type: integer
+                    description: Number of files found and listed
+                  files_processed:
+                    type: integer
+                    description: Number of files actually processed
+                  csv_output_path:
+                    type: string
+                    nullable: true
+                    description: Path where CSV was written (if csv_output_path was provided in request)
+                  csv_written:
+                    type: boolean
+                    nullable: true
+                    description: Whether CSV was successfully written
+                  csv_error:
+                    type: string
+                    nullable: true
+                    description: Error message if CSV writing failed
+                additionalProperties: false
+        "202":
+          description: Job is still processing
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status, message]
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+                    enum: [queued, processing]
+                  message:
+                    type: string
+                    example: "Job is still processing. Use /workflow/status/{job_id} to check progress."
+        "404":
+          description: Job not found
+        "500":
+          description: Job failed or server error
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status, error]
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+                    enum: [error]
+                  error:
+                    type: string
+                    description: Error message
+
+  /workflow/test-upload-csv:
+    post:
+      summary: Test CSV upload to Egnyte
+      operationId: testUploadCsv
+      description: Creates a simple test CSV file with "test" content and uploads it to the specified Egnyte path. Used for testing the CSV upload functionality before running full constructability reviews.
+      tags: [workflow]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csv_output_folder, csv_output_filename]
+              properties:
+                csv_output_folder:
+                  type: string
+                  description: Egnyte folder path where CSV should be uploaded (e.g., "/Shared")
+                  example: "/Shared"
+                csv_output_filename:
+                  type: string
+                  description: CSV filename (e.g., "Test_Constructability_Review.csv" or "Test_Constructability_Review"). If no .csv extension, it will be added automatically.
+                  example: "Test_Constructability_Review.csv"
+      responses:
+        "200":
+          description: CSV uploaded successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, message, csv_path]
+                properties:
+                  success:
+                    type: boolean
+                    description: Whether upload was successful
+                  message:
+                    type: string
+                    description: Status message
+                  csv_path:
+                    type: string
+                    description: Full Egnyte path where CSV was uploaded
+                    example: "/Shared/Test_Constructability_Review.csv"
+        "400":
+          description: Bad request - missing required fields
+        "401":
+          description: Unauthorized
+        "500":
+          description: Server error
