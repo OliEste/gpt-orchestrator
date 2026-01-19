@@ -32,9 +32,10 @@ import re
 import PyPDF2
 from pdf2image import convert_from_path
 import tiktoken
+from logging_config import get_logger
 
 # Get logger for this module (will use the root logger configured in orchestrator.py)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Phase(Enum):

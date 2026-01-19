@@ -26,6 +26,7 @@ if current_dir not in sys.path:
 
 from shared.config import SharedConfig
 from workflow import ConstructabilityWorkflow
+from logging_config import setup_logging, get_logger
 
 # CSV Template configuration
 CSV_TEMPLATE_PATH = os.path.join(
@@ -38,102 +39,9 @@ CSV_TEMPLATE_PATH = os.path.join(
 job_log_handlers = {}
 job_log_handlers_lock = threading.Lock()
 
-# Configure basic session logging (app-level only)
-def setup_logging():
-    """Configure basic session logging for app-level events."""
-    # Check if logging is already configured (avoid duplicate handlers)
-    root_logger = logging.getLogger()
-    if root_logger.handlers:
-        # Logging already configured, just return the logger
-        return logging.getLogger(__name__)
-    
-    # Create formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
-    # Console handler (for IIS stdout) - app-level only
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    
-    # Root logger
-    root_logger.setLevel(logging.DEBUG)
-    root_logger.addHandler(console_handler)
-    
-    # Flask logger - reduce verbosity
-    flask_logger = logging.getLogger('werkzeug')
-    flask_logger.setLevel(logging.WARNING)
-    
-    # Get module logger
-    module_logger = logging.getLogger(__name__)
-    module_logger.info("Session logging initialized (app-level only)")
-    
-    return module_logger
-
-def setup_job_logging(job_id: str):
-    """Create a per-review log file for a specific job."""
-    # Get the directory where this script is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Create logs subdirectory
-    log_dir = os.path.join(script_dir, 'logs')
-    os.makedirs(log_dir, exist_ok=True)
-    
-    # Optional: Clean up old log files (older than 30 days)
-    try:
-        import glob
-        import time
-        cutoff_time = time.time() - (30 * 24 * 60 * 60)  # 30 days ago
-        for log_file in glob.glob(os.path.join(log_dir, 'review_*.log')):
-            if os.path.getmtime(log_file) < cutoff_time:
-                os.remove(log_file)
-    except Exception:
-        # Don't fail if cleanup doesn't work
-        pass
-    
-    # Create timestamped filename with job_id
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_file = os.path.join(log_dir, f'review_{job_id}_{timestamp}.log')
-    
-    # Create formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
-    # File handler for this job
-    file_handler = logging.FileHandler(log_file, encoding='utf-8')
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
-    
-    # Add handler to root logger
-    root_logger = logging.getLogger()
-    root_logger.addHandler(file_handler)
-    
-    # Store handler for cleanup later
-    with job_log_handlers_lock:
-        job_log_handlers[job_id] = file_handler
-    
-    # Log that job logging has started
-    logger = logging.getLogger(__name__)
-    logger.info(f"Job {job_id} logging initialized - Log file: {log_file}")
-    
-    return log_file
-
-def cleanup_job_logging(job_id: str):
-    """Remove job-specific log handler when job completes."""
-    with job_log_handlers_lock:
-        if job_id in job_log_handlers:
-            handler = job_log_handlers[job_id]
-            root_logger = logging.getLogger()
-            root_logger.removeHandler(handler)
-            handler.close()
-            del job_log_handlers[job_id]
-
-# Setup logging before creating app
-logger = setup_logging()
+# Setup session-level logging using logging_config
+setup_logging()
+logger = get_logger(__name__)
 
 app = Flask(__name__)
 workflow = ConstructabilityWorkflow()
@@ -207,6 +115,73 @@ def _cleanup_old_jobs():
             logger.info(f"Deleted {len(to_delete)} old jobs")
 
 
+def setup_job_logging(job_id: str):
+    """Create a per-review log file for a specific job."""
+    try:
+        # Get the directory where this script is located
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Create logs subdirectory
+        log_dir = os.path.join(script_dir, 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Optional: Clean up old log files (older than 30 days)
+        try:
+            import glob
+            import time
+            cutoff_time = time.time() - (30 * 24 * 60 * 60)  # 30 days ago
+            for log_file in glob.glob(os.path.join(log_dir, 'review_*.log')):
+                if os.path.getmtime(log_file) < cutoff_time:
+                    os.remove(log_file)
+        except Exception:
+            # Don't fail if cleanup doesn't work
+            pass
+        
+        # Create timestamped filename with job_id
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_file = os.path.join(log_dir, f'review_{job_id}_{timestamp}.log')
+        
+        # Create formatter (matching logging_config format)
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        
+        # File handler for this job
+        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(formatter)
+        
+        # Add handler to root logger
+        root_logger = logging.getLogger()
+        root_logger.addHandler(file_handler)
+        
+        # Store handler for cleanup later
+        with job_log_handlers_lock:
+            job_log_handlers[job_id] = file_handler
+        
+        # Log that job logging has started
+        logger.info(f"Job {job_id} logging initialized - Log file: {log_file}")
+        
+        return log_file
+    except Exception as e:
+        # Log error using session logger
+        logger.error(f"Failed to setup job logging for {job_id}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return None
+
+def cleanup_job_logging(job_id: str):
+    """Remove job-specific log handler when job completes."""
+    with job_log_handlers_lock:
+        if job_id in job_log_handlers:
+            handler = job_log_handlers[job_id]
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(handler)
+            handler.close()
+            del job_log_handlers[job_id]
+
+
 def _should_exclude_path(file_path: str, excluded_paths: list) -> bool:
     """
     Check if a file path should be excluded based on excluded_paths.
@@ -256,7 +231,10 @@ def _process_constructability_review_async(job_id: str, egnyte_token: str, data:
     try:
         # Setup per-review logging for this job
         log_file = setup_job_logging(job_id)
-        logger.info(f"Starting constructability review job {job_id} - Log file: {log_file}")
+        if log_file:
+            logger.info(f"Starting constructability review job {job_id} - Log file: {log_file}")
+        else:
+            logger.warning(f"Starting constructability review job {job_id} - Logging setup failed, using session logging only")
         
         _update_job_progress(job_id, status='processing', progress={'current_stage': 'Fetching files from Egnyte'})
         
@@ -305,6 +283,7 @@ def _process_constructability_review_async(job_id: str, egnyte_token: str, data:
             # Skip if the folder itself is excluded
             if _should_exclude_path(folder_path, excluded_paths):
                 _update_job_progress(job_id, status='error', error='The specified folder is excluded from review')
+                cleanup_job_logging(job_id)
                 return
             
             file_list = _list_files_recursive(
@@ -318,6 +297,7 @@ def _process_constructability_review_async(job_id: str, egnyte_token: str, data:
         
         if len(file_paths) == 0:
             _update_job_progress(job_id, status='error', error='No files found to process after applying exclusions')
+            cleanup_job_logging(job_id)
             return
         
         # Update progress: files found
