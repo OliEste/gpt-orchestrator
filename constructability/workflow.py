@@ -8,7 +8,7 @@ import base64
 import time
 import json
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
 import threading
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -1254,7 +1254,7 @@ Your response should be ONLY the list of FILE_PATH values, one per line."""
         
         logger.info(f"[PHASE 3] Rendering {len(all_pages) - skipped_dwg_count} pages from {len(pages_by_file)} files")
         
-        # Use ThreadPoolExecutor for IIS compatibility (ProcessPoolExecutor causes crashes in IIS)
+        # Use ThreadPoolExecutor for IIS compatibility
         start_time = time.time()
         rendered_count = 0
         
@@ -1485,6 +1485,7 @@ Your response should be ONLY the list of FILE_PATH values, one per line."""
                     return rendered_pages
         
         except Exception as e:
+            logger.error(f"[PHASE 3] Error rendering {os.path.basename(file_path) if file_path else 'unknown file'}: {e}", exc_info=True)
             return {}
     
     def _phase4_review(
