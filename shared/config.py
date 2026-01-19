@@ -28,6 +28,9 @@ class SharedConfig:
     EGNYTE_TOKEN_URL = os.getenv('EGNYTE_TOKEN_URL', 'https://coastalconstruction.egnyte.com/puboauth/v1/token')
     EGNYTE_BASE_URL = os.getenv('EGNYTE_BASE_URL', 'https://coastalconstruction.egnyte.com')
     
+    # Poppler settings (for PDF rendering)
+    POPPLER_PATH = os.getenv('POPPLER_PATH', None)  # Path to poppler bin directory, or None to use system PATH
+    
     @classmethod
     def validate(cls):
         """Validate that required configuration is present."""

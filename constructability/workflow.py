@@ -1424,7 +1424,13 @@ Your response should be ONLY the list of FILE_PATH values, one per line."""
                     # Render all valid pages
                     min_page = min(valid_pages)
                     max_page = max(valid_pages)
-                    images = convert_from_path(tmp_path, dpi=150, first_page=min_page, last_page=max_page)
+                    
+                    # Use poppler path from config if specified, otherwise use system PATH
+                    poppler_path = SharedConfig.POPPLER_PATH if SharedConfig.POPPLER_PATH and os.path.exists(SharedConfig.POPPLER_PATH) else None
+                    if poppler_path:
+                        images = convert_from_path(tmp_path, dpi=150, first_page=min_page, last_page=max_page, poppler_path=poppler_path)
+                    else:
+                        images = convert_from_path(tmp_path, dpi=150, first_page=min_page, last_page=max_page)
                     
                     # Convert to base64
                     rendered_pages = {}
