@@ -1634,9 +1634,27 @@ def test_upload_csv():
 
 
 if __name__ == '__main__':
+    # Check if running under IIS HttpPlatformHandler for production
+    http_platform_port = os.environ.get('HTTP_PLATFORM_PORT')
+    is_production = http_platform_port is not None
+    
+    # Determine port and host based on environment
+    if is_production:
+        # Production: Use port from IIS, bind to localhost
+        port = int(http_platform_port)
+        host = '127.0.0.1'
+        mode = "Production (IIS HttpPlatformHandler)"
+    else:
+        # Development: Use config port, bind to all interfaces
+        port = SharedConfig.PORT
+        host = '0.0.0.0'
+        mode = "Development"
+    
     logger.info("="*80)
     logger.info("Initializing Constructability Orchestrator...")
-    logger.info(f"Port: {SharedConfig.PORT}")
+    logger.info(f"Mode: {mode}")
+    logger.info(f"Port: {port}")
+    logger.info(f"Host: {host}")
     logger.info(f"Debug mode: {SharedConfig.DEBUG}")
     logger.info(f"Egnyte Base URL: {SharedConfig.EGNYTE_BASE_URL}")
     logger.info(f"Egnyte Authorization URL: {SharedConfig.EGNYTE_AUTHORIZATION_URL}")
@@ -1647,8 +1665,8 @@ if __name__ == '__main__':
     
     SharedConfig.validate()
     app.run(
-        host='0.0.0.0',
-        port=SharedConfig.PORT,
+        host=host,
+        port=port,
         debug=SharedConfig.DEBUG
     )
 
